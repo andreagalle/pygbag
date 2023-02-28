@@ -337,8 +337,13 @@ now packing application ....
     }
 
     if args.gh_codespace:
-        rails_dev_host = subprocess.check_output(['echo', '$RAILS_DEVELOPMENT_HOSTS', '|', 'cut', '-d', ',', '-f', '2'])
-        CC["myproxy"] = f"https://{args.gh_codespace}-{args.port}{rails_dev_host.decode('utf-8')}/"
+        rails_dev_host = subprocess.run(
+                                        "echo $RAILS_DEVELOPMENT_HOSTS | cut -d , -f 2",
+                                        shell=True,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        )
+        CC["myproxy"] = f"https://{args.gh_codespace}-{args.port}{rails_dev_host.stdout.decode().strip()}/"
 
     pygbag.config = CC
 

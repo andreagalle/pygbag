@@ -336,7 +336,8 @@ now packing application ....
     }
 
     if args.gh_codespace:
-        CC["myproxy"] = args.gh_codespace.replace(".github.dev/", f"-{args_port}.preview.app.github.dev/")
+        rails_dev_host = subprocess.check_output(['echo', '$RAILS_DEVELOPMENT_HOSTS', '|', 'cut', '-d', ',', '-f', '2'])
+        CC["myproxy"] = f"https://{args.gh_codespace}-{args.port}{rails_dev_host.decode('utf-8')}/"
 
     pygbag.config = CC
 

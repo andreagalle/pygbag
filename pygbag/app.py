@@ -274,6 +274,12 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
         help="Specify alternate port [default: 8000]",
     )
 
+    parser.add_argument(
+        "--gh_codespace",
+        metavar="ADDRESS",
+        help="Specify the GitHub codespace URL",
+    )
+
     args = parser.parse_args()
 
     app_name = app_folder.name.lower().replace(" ", ".")
@@ -328,6 +334,9 @@ now packing application ....
         "version": __version__,
         "PYBUILD": args.PYBUILD,
     }
+
+    if args.gh_codespace:
+        CC["myproxy"] = args.gh_codespace.replace(".github.dev/", f"-{args_port}.preview.app.github.dev/")
 
     pygbag.config = CC
 

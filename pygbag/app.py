@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import subprocess
 
 # rmtree msg on win32
 import warnings

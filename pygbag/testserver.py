@@ -195,7 +195,6 @@ class CodeHandler(SimpleHTTPRequestHandler):
                 print()
 
             elif path.endswith(".html"):
-                print("REPLACING", path, CDN, PROXY)
                 content = f.read()
 
                 # redirect known CDN to relative path
@@ -206,9 +205,11 @@ class CodeHandler(SimpleHTTPRequestHandler):
 
                 if MYPROXY is not None: 
                     # redirect user CDN to proper host (GitHub codespace, Docker container IP)
+                    print("REPLACING", path, CDN, BMYPROXY)
                     content = content.replace(BCDN, BMYPROXY)
                 else:
                     # redirect user CDN to localhost
+                    print("REPLACING", path, CDN, PROXY)
                     content = content.replace(BCDN, BPROXY)
 
                 file_size = len(content)

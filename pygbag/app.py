@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import subprocess
 
 # rmtree msg on win32
 import warnings
@@ -274,6 +275,8 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
         help="Specify alternate port [default: 8000]",
     )
 
+    parser.add_argument("--docker_workspace", action="store_true", help="serves on Docker container IP address")
+
     args = parser.parse_args()
 
     app_name = app_folder.name.lower().replace(" ", ".")
@@ -328,6 +331,24 @@ now packing application ....
         "version": __version__,
         "PYBUILD": args.PYBUILD,
     }
+
+    if args.docker_workspace:
+
+        docker_ip = subprocess.run  (
+                                    "ifconfig | grep 'inet ' | grep -Fv 127.0.0.1 | awk '{print $2}'",
+                                    shell=True,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    )
+
+        # this has to be after the "proxy" definition not to affect it
+        # this is just to update the bind argument for http.server module
+        if docker_ip.returncode == 0:
+            args.bind = docker_ip.stdout.decode().strip()
+            print(f"The container IP address is: {args.bind}")
+        else:
+            error = result.stderr.decode().strip()
+            print(f"Error: {error}")
 
     pygbag.config = CC
 

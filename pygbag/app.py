@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import subprocess
 
 # rmtree msg on win32
 import warnings
@@ -285,6 +286,12 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
         help="Specify alternate port [default: 8000]",
     )
 
+    parser.add_argument(
+        "--gh_codespace",
+        metavar="ADDRESS",
+        help="Specify the GitHub codespace URL",
+    )
+
     args = parser.parse_args()
 
     # when in browser IDE everything should be done in allowed folder
@@ -350,6 +357,15 @@ now packing application ....
         "version": __version__,
         "PYBUILD": args.PYBUILD,
     }
+
+    if args.gh_codespace:
+        rails_dev_host = subprocess.run(
+                                        "echo $RAILS_DEVELOPMENT_HOSTS | cut -d , -f 2",
+                                        shell=True,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        )
+        CC["myproxy"] = f"https://{args.gh_codespace}-{args.port}{rails_dev_host.stdout.decode().strip()}/"
 
     pygbag.config = CC
 

@@ -23,20 +23,29 @@ from __future__ import annotations
 import sys
 
 M1='os, json, builtins, shutil, zipimport, time, trace, traceback, '
-M2='asyncio, inspect, _thread, importlib, ctypes, tomllib'
+M2='asyncio, inspect, _thread, importlib, ctypes, tomllib, pathlib'
 for mod in (M1+M2).split(', '):
     try:
         __import__(mod)
     except:
         pass
 try:
+    # installer
     sys.stdout.reconfigure(encoding='cp437')
+    # bokeh
+    sys.stdout.reconfigure(encoding='unicode-escape')
     sys.stdout.reconfigure(encoding='utf-16')
     sys.stdout.reconfigure(encoding='utf-8')
 except:
     pass
 
-import pathlib
+import sysconfig
+sysconfig.get_paths()
+
+import multiprocessing.connection
+
+# sockets ????
+import asyncio.selector_events
 
 import multiprocessing
 
@@ -61,6 +70,10 @@ import urllib.request
 
 # installer "cp437"
 import compileall, csv, configparser
+from email.policy import compat32
+
+#telemetrix
+import concurrent.futures.thread
 
 # micropip
 import importlib.metadata
@@ -71,7 +84,7 @@ import importlib.readers
 
 #pymunk+tests
 import unittest, locale
-import imp, platform
+import platform
 import numbers, random
 
 #pgzero
@@ -104,6 +117,13 @@ import tty
 # cffi
 import copy
 
+# numpy
+import secrets
+
+# HPy
+import plistlib
+from pkg_resources import resource_filename
+
 # pgex
 import typing
 try:
@@ -118,6 +138,25 @@ import xml.dom.minidom
 from xml.dom import expatbuilder
 import pydoc
 
+# Box2D
+import optparse
+
+# bokeh
+import hmac
+
+#ursina
+import imghdr
+
+# pep722
+import pyparsing
+import packaging.requirements
+import installer
+
+try:
+    import imp
+except:
+    # python 3.12 !
+    pass
 
 if 0:
     import cffi
@@ -160,7 +199,9 @@ with open("build/stdlib.list","w") as tarlist:
             if name.endswith(sysconf):
                 name = name.replace(sysconf,"_sysconfigdata__emscripten_wasm32-emscripten.py")
 
-            name = name.replace('asyncio/selector_','asyncio/wasm_')
+            if name.find('asyncio/selector_')>=0:
+                #print(name, file=tarlist )
+                name = name.replace('asyncio/selector_','asyncio/wasm_')
             print(name, file=tarlist )
         else:
             stdlp = stdlp.replace('$(arch)','emsdk')

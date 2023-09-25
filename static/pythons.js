@@ -1,10 +1,32 @@
 "use strict";
 
+/*  BF2 is still broken see  https://github.com/jvilk/BrowserFS/issues/325
+import { configure, BFSRequire, EmscriptenFS } from './browserfs.mjs';
+//import { Buffer } from 'buffer';
+
+window.BrowserFS = {}
+window.BrowserFS.configure = configure
+window.BrowserFS.BFSRequire = BFSRequire
+window.BrowserFS.EmscriptenFS = EmscriptenFS
+window.BrowserFS.Buffer = BFSRequire('buffer')
+*/
+var bfs2 = false
+
+async function import_browserfs() {
+    console.warn("late import", config.cdn+"browserfs.min.js" )
+    var script = document.createElement("script")
+    script.src = vm.config.cdn + "browserfs.min.js"
+    document.head.appendChild(script)
+    await _until(defined)("BrowserFS")
+}
+
+
 /*  Facilities implemented in js
 
     js.SVG     : convert svg to png
     js.FETCH   : async GET/POST via fetch
     js.MM      : media manager
+        js.MM.CAMERA
     js.VT      : terminal creation
     js.FTDI    : usb serial
     js.MISC    : todo
@@ -26,8 +48,9 @@ const FETCH_FLAGS = {
 
 
 window.get_terminal_cols = function () {
-
-    return Number( ( window.terminal && terminal.dataset.cols) || 132)
+    var cdefault = vm.config.cols || 132
+    const cols = (window.terminal && terminal.dataset.cols) || cdefault
+    return Number(cols)
 }
 
 window.get_terminal_console = function () {
@@ -39,7 +62,7 @@ window.get_terminal_console = function () {
 }
 
 window.get_terminal_lines = function () {
-    return Number( (window.terminal && terminal.dataset.lines) || 42) + get_terminal_console()
+    return Number( (window.terminal && terminal.dataset.lines) || vm.config.lines) + get_terminal_console()
 }
 
 
@@ -65,7 +88,7 @@ function reverse(s){
     return s.split("").reverse().join("");
 }
 
-// please comment if you find a bug
+// please comment here if you find a bug
 // https://stackoverflow.com/questions/5202085/javascript-equivalent-of-pythons-rsplit
 
 String.prototype.rsplit = function(sep, maxsplit) {
@@ -90,12 +113,14 @@ String.prototype.rsplit = function(sep, maxsplit) {
     if (result.length) {
         result.reverse()
         if (data.length>1) {
-            return [data.join(sep), result ]
+            // thx @imkzh
+            return [data.join(sep), ...result ]
         }
         return result
     }
     return [this]
 }
+
 
 function jsimport(url, sync) {
     const jsloader=document.createElement('script')
@@ -142,6 +167,11 @@ window.defined = defined
 var prom = {}
 var prom_count = 0
 window.iterator = function * iterator(oprom) {
+    if (prom_count > 32000 ) {
+        console.warn("resetting prom counter")
+        prom_count = 0
+    }
+
     const mark = prom_count++;
     var counter = 0;
     oprom.then( (value) => prom[mark] = value )
@@ -173,33 +203,37 @@ window.cross_file = function * cross_file(url, store, flags) {
     cross_file.dlcomplete = 1
     var content = 0
     var response = null
-    console.log("cross_file.fetch", url, flags || FETCH_FLAGS )
+    console.log("Begin.cross_file.fetch", url, flags || FETCH_FLAGS )
+
     fetch(url, flags || FETCH_FLAGS)
         .then( resp => {
                 response = resp
+                console.log("cross_file.fetch", response.status)
                 if (checkStatus(resp))
                     return response.arrayBuffer()
+                else {
+                    console.warn("got wrong status", response)
+                }
             })
         .then( buffer => content = new Uint8Array(buffer) )
-        .catch(x => response.error = new Error(x) )
+        .catch(x => {
+                response = { "error" : new Error(x) }
+            })
 
     while (!response)
         yield content
 
-    console.warn("got response", response, "len", response.headers.get("Content-Length"))
-
     while (!content && !response.error )
         yield content
 
-    //console.warn("got content or error", content || response.error)
-
     if (response.error) {
-        console.error("cross_file:", response.error)
+        console.warn("cross_file.error :", response.error)
         return response.error
+    } else {
+        // console.warn("got response", response, "len", response.headers.get("Content-Length"))
     }
-
     FS.writeFile(store, content )
-    console.log("cross_file.fetch", store, "r/w=", content.byteLength )
+    console.log("End.cross_file.fetch", store, "r/w=", content.byteLength)
     cross_file.dlcomplete = content.byteLength
     yield store
 }
@@ -255,14 +289,14 @@ function prerun(VM) {
 
     VM.FS = FS
 
-
+/*
     if (window.BrowserFS) {
-        vm.BFS = new BrowserFS.EmscriptenFS()
+        VM.BFS = new BrowserFS.EmscriptenFS()
         VM.BFS.Buffer = BrowserFS.BFSRequire('buffer').Buffer
     } else {
-        console.error("VM.prefun","BrowserFS not found")
+        console.error("VM.prerun","BrowserFS not found")
     }
-
+*/
     const sixel_prefix = String.fromCharCode(27)+"Pq"
 
 
@@ -545,19 +579,12 @@ async function custom_postrun() {
     console.warn("VM.postrun Begin")
     const pyrc_url = vm.config.cdn + "pythonrc.py"
     var content = 0
-    console.log("cross_file.fetch", pyrc_url )
-
 
     fetch(pyrc_url, {})
         .then( response => checkStatus(response) && response.arrayBuffer() )
         .then( buffer => run_pyrc(new Uint8Array(buffer)) )
         .catch(x => console.error(x))
-/*
-    store_file(
-        "https://pygame-web.github.io/archives/repo/repodata.json",
-        "/data/data/org.python/repodata.json"
-    )
-*/
+
     console.warn("VM.postrun End")
 }
 
@@ -568,39 +595,51 @@ async function custom_postrun() {
 
 function feat_gui(debug_hidden) {
 
-    var canvas = document.getElementById("canvas")
+    var canvas2d = document.getElementById("canvas")
 
-    if (!canvas) {
-        config.user_canvas = config.user_canvas || 0 //??=
-        config.user_canvas_managed = config.user_canvas_managed || 0 //??=
-        canvas = document.createElement("canvas")
-        canvas.id = "canvas"
-        canvas.style.position = "absolute"
-        canvas.style.top = "0px"
-        canvas.style.right = "0px"
-        canvas.tabindex = 0
-        document.body.appendChild(canvas)
-console.warn("TODO: test 2D/3D reservation")
+    function add_canvas(name, width, height) {
+        const new_canvas = document.createElement("canvas")
+        new_canvas.id = name
+        new_canvas.width = width || 1
+        new_canvas.height = height || 1
+        document.body.appendChild(new_canvas)
+        return new_canvas
+    }
 
 
+
+    if (!canvas2d) {
+        canvas2d =  add_canvas("canvas")
+        canvas2d.style.position = "absolute"
+        canvas2d.style.top = "0px"
+        canvas2d.style.right = "0px"
+        canvas2d.tabindex = 0
         //var ctx = canvas.getContext("2d")
     } else {
         // user managed canvas
-        config.user_canvas = 1
-        config.user_canvas_managed = config.user_canvas_managed || 0 //??=
 console.warn("TODO: user defined canvas")
     }
 
-    vm.canvas = canvas
+    config.user_canvas = config.user_canvas || 0 //??=
+    config.user_canvas_managed = config.user_canvas_managed || 0 //??=
+
+    vm.canvas2d = canvas2d
+
+    var canvas3d = document.getElementById("canvas3d")
+    if (!canvas3d) {
+        canvas3d = add_canvas("canvas3d", 128, 128)
+        canvas3d.style.position = "absolute"
+        canvas3d.style.bottom = "0px"
+        canvas3d.style.left = "0px"
+
+    }
+    vm.canvas3d = canvas3d
+
+
+    canvas.addEventListener("click", MM.focus_handler)
 /*
 
 
-    function event_canvas_regain(event) {
-        console.log("entering canvas")
-        canvas.focus();
-    }
-
-    canvas.addEventListener('mouseenter', event_canvas_regain, false);
 
     function event_fullscreen(event){
         if (!event.target.hasAttribute('fullscreen')) return;
@@ -616,6 +655,7 @@ console.warn("TODO: user defined canvas")
 
     // window resize
     function window_canvas_adjust(divider) {
+        const canvas = vm.canvas2d
         var want_w
         var want_h
 
@@ -629,12 +669,14 @@ console.warn("TODO: user defined canvas")
         if (vm.config.debug) {
             max_width = max_width * .80
             max_height = max_height * .80
+        } else {
+            // max_height -= 150
         }
 
         want_w = max_width
         want_h = max_height
 
-        console.log("window_canvas_adjust:", want_w, want_h )
+
         if (window.devicePixelRatio != 1 )
             console.warn("Unsupported device pixel ratio", window.devicePixelRatio)
 
@@ -651,25 +693,22 @@ console.warn("TODO: user defined canvas")
         want_w = Math.trunc(want_w / divider )
         want_h = Math.trunc(want_w / ar)
 
-        if (vm.config.debug)
-            console.log("window[DEBUG:CORRECTED]:", want_w, want_h, ar, divider)
-
 
         // constraints
         if (want_h > max_height) {
+            if (vm.config.debug)
+                console.warn("too tall : have",max_height,"want",want_h)
             want_h = max_height
             want_w = want_h * ar
         }
 
         if (want_w > max_width) {
-                want_w = max_width
-                want_h = want_h / ar
+            if (vm.config.debug)
+                console.warn("too wide : have",max_width,"want",want_w)
+            want_w = max_width
+            want_h = want_h / ar
         }
 
-        // apply
-
-        canvas.style.width = want_w + "px"
-        canvas.style.height = want_h + "px"
 
         if (vm.config.debug) {
             canvas.style.margin= "none"
@@ -688,10 +727,20 @@ console.warn("TODO: user defined canvas")
             canvas.style.right = 0
             canvas.style.margin= "auto"
         }
+
+        // apply
+        canvas.style.width = want_w + "px"
+        canvas.style.height = want_h + "px"
+
+        if (vm.config.debug)
+            console.log(`window[DEBUG:CORRECTED]: ${want_w}, ${want_h}, ar=${ar}, div=${divider}`)
+
+
     }
 
 
     function window_canvas_adjust_3d(divider) {
+        const canvas = vm.canvas3d
         divider = divider || 1
         if ( (canvas.width==1) && (canvas.height==1) ){
             console.log("canvas context not set yet")
@@ -703,7 +752,6 @@ console.warn("TODO: user defined canvas")
             vm.config.fb_width = canvas.width
             vm.config.fb_height = canvas.height
             vm.config.fb_ar  =  canvas.width / canvas.height
-            console.warn("@@@@@@ GLES Canvas size",vm.config.fb_width,'x',vm.config.fb_height,"@@@@@@")
         }
 
 
@@ -718,13 +766,16 @@ console.warn("TODO: user defined canvas")
 
         // default is maximize
         // default is maximize
-        var max_width = window.innerWidth
-        var max_height = window.innerHeight
+        var max_width = window.document.body.clientWidth
+        var max_height = window.document.body.clientHeight
+        want_w = max_width
+        want_h = max_height
 
-        want_w = max_width * 0.98
-        want_h = max_height * 0.98
 
-        // innerXXXX is not ideal
+        if (vm.config.debug)
+            console.log("window3D[DEBUG:CORRECTED]:", want_w, want_h, ar, divider)
+
+        // keep fb ratio
         want_w = Math.trunc(want_w / divider )
         want_h = Math.trunc(want_w / ar)
 
@@ -741,29 +792,35 @@ console.warn("TODO: user defined canvas")
             want_h = want_h / ar
         }
 
-
         // restore phy size
         canvas.width  = vm.config.fb_width
         canvas.height = vm.config.fb_height
+
+        canvas.style.position = "absolute"
+        canvas.style.top = 0
+        canvas.style.right = 0
+
+        if (!vm.config.debug) {
+            // center canvas
+            canvas.style.left = 0
+            canvas.style.bottom = 0
+            canvas.style.margin= "auto"
+        } else {
+            canvas.style.margin= "none"
+            canvas.style.left = "auto"
+            canvas.style.bottom = "auto"
+        }
 
         // apply viewport size
         canvas.style.width = want_w + "px"
         canvas.style.height = want_h + "px"
 
-        // center canvas
-        canvas.style.position = "absolute"
-        canvas.style.left = 0
-        canvas.style.bottom = 0
-        canvas.style.top = 0
-        canvas.style.right = 0
-        canvas.style.margin= "auto"
+        queue_event("resize3d", { width : want_w, height : want_h } )
 
-        const gl = canvas.getContext('webgl2')
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height)
     }
 
     function window_resize_3d(gui_divider) {
-        console.warn("@@@@@@@@@@ 3D resize mode request @@@@@@@@")
+console.log(" @@@@@@@@@@@@@@@@@@@@@@ 3D CANVAS @@@@@@@@@@@@@@@@@@@@@@")
         setTimeout(window_canvas_adjust_3d, 200, gui_divider);
         setTimeout(window.focus, 300);
     }
@@ -774,7 +831,7 @@ console.warn("TODO: user defined canvas")
             return vm.config.user_canvas_managed
 
         if (!window.canvas) {
-            console.warning("777: No canvas defined")
+            console.warn("777: No canvas defined")
             return
         }
 
@@ -799,10 +856,9 @@ console.warn("TODO: user defined canvas")
     else
         window.window_resize = window_resize_2d
 
-    return canvas
+    vm.canvas = canvas2d || canvas3d
+    return vm.canvas
 }
-
-
 
 
 
@@ -812,13 +868,8 @@ async function feat_fs(debug_hidden) {
     var uploaded_file_count = 0
 
     if (!window.BrowserFS) {
-        console.warn("late import", config.cdn+"browserfs.min.js" )
-        var script = document.createElement("script")
-        script.src = vm.config.cdn + "browserfs.min.js"
-        document.head.appendChild(script)
-        await _until(defined)("BrowserFS")
+        await import_browserfs()
     }
-
 
     function readFileAsArrayBuffer(file, success, error) {
         var fr = new FileReader();
@@ -960,29 +1011,89 @@ function feat_stdout() {
 // TODO make a queue, python is not always ready to receive those events
 // right after page load
 
-function feat_lifecycle() {
-        window.addEventListener("focus", function(e){
-            queue_event("focus", e )
-        })
 
-        window.addEventListener("blur", function(e){
-            queue_event("blur", e )
-        })
+function focus_handler(ev) {
+    if (ev.type == "click") {
+        canvas.removeEventListener("click", MM.focus_handler)
+        canvas.focus()
+        return
+    }
+
+    if (ev.type == "mouseenter") {
+        canvas.focus()
+        console.log("canvas focus set")
+        if (MM.focus_lost && MM.current_trackid) {
+            console.warn("resuming music queue")
+            MM[MM.current_trackid].media.play()
+        }
+
+        canvas.removeEventListener("mouseenter", MM.focus_handler)
+        return
+    }
+
+    if (ev.type == "focus") {
+        queue_event("focus", ev )
+        console.log("focus set")
+        canvas.focus()
+        return
+    }
+
+    // for autofocus
+    if (ev.type == "blur") {
+        // remove initial focuser that may still be there
+        try {
+            canvas.removeEventListener("click", MM.focus_handler)
+        } catch (x ) {}
+
+        canvas.addEventListener("click", MM.focus_handler)
+        canvas.addEventListener("mouseenter", MM.focus_handler)
+        queue_event("blur", ev )
+        return
+    }
+}
+
+
+function feat_lifecycle() {
+        window.addEventListener("focus", MM.focus_handler)
+        window.addEventListener("blur", MM.focus_handler)
 
         if (!vm.config.can_close) {
             window.onbeforeunload = function() {
-                var message = "Are you sure you want to navigate away from this page ?";
-                    if (confirm(message)) return message;
-                    else return false;
+                console.warn("window.onbeforeunload")
+                if (MM.current_trackid) {
+                    console.warn("pausing music queue")
+                    MM.focus_lost = 1
+                    MM[MM.current_trackid].media.pause()
+                } else {
+                    console.warn("not track playing")
+                }
+                const message = "Are you sure you want to navigate away from this page ?"
+                if (confirm(message)) {
+                    return message
+                } else {
+                    return false
+                }
             }
         }
 }
 
+
 function feat_snd() {
     // to set user media engagement status and possibly make it blocking
     MM.UME = !vm.config.ume_block
-    if (!MM.UME)
+    MM.is_safari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    if (!MM.UME && !MM.is_safari)
         MM_play( {auto:1, test:1, media: new Audio(config.cdn+"empty.ogg")} , 1)
+
+    if (MM.is_safari) {
+        MM.is_safari = function unlock_ume() {
+                console.warn("safari ume unlocking")
+                MM.UME = 1
+                window.removeEventListener("click", MM.is_safari)
+                MM.is_safari = 1
+            }
+        window.addEventListener("click", MM.is_safari)
+    }
 }
 
 // ============================== event queue =============================
@@ -1025,57 +1136,120 @@ function download(diskfile, filename) {
 
 
 
-
-
-
-window.MM = { tracks : 0, UME : true, download : download, camera : {} }
+window.MM = {
+    tracks : 0,
+    trackid_current : 0,
+    next : "",
+    next_hint : "",
+    next_loops : 0,
+    next_tid : 0,
+    transition : 0,
+    UME : true,
+    download : download,
+    focus_lost : 0,
+    focus_handler : focus_handler,
+    camera : {}
+}
 
 async function media_prepare(trackid) {
     const track = MM[trackid]
+
 
     await _until(defined)("avail", track)
 
     if (track.type === "audio") {
         //console.log(`audio ${trackid}:${track.url} ready`)
+        return
     }
 
     if (track.type === "fs") {
         console.log(`fs ${trackid}:${track.url} => ${track.path} ready`)
+        return
     }
 
+
     if (track.type === "mount") {
+
+        if (!vm.BFS) {
+            await import_browserfs()
+
+            // how is passed the FS object ???
+            vm.BFS = new BrowserFS.EmscriptenFS()  // {FS:vm.FS}
+
+            vm.BFS.Buffer = BrowserFS.BFSRequire('buffer').Buffer
+        }
+
         // async
-        MM[trackid].media = vm.BFS.Buffer.from( MM[trackid].data )
+        MM[trackid].media = await vm.BFS.Buffer.from( MM[trackid].data )
 
         track.mount.path = track.mount.path || '/' //??=
 
         const hint = `${track.mount.path}@${track.mount.point}:${trackid}`
 
-        function apk_cb(e, apkfs){
-            console.log(__FILE__, "930 mounting", hint, "onto", track.mount.point)
-
-            BrowserFS.FileSystem.InMemory.Create(
-                function(e, memfs) {
-                    BrowserFS.FileSystem.OverlayFS.Create({"writable" :  memfs, "readable" : apkfs },
-                        function(e, ovfs) {
-                            BrowserFS.FileSystem.MountableFileSystem.Create({
-                                '/' : ovfs
-                                }, async function(e, mfs) {
-                                    await BrowserFS.initialize(mfs);
-                                    await vm.FS.mount(vm.BFS, {root: track.mount.path}, track.mount.point );
-                                    setTimeout(()=>{track.ready=true}, 0)
-                                })
-                        }
-                    );
-                }
-            );
+        if (!vm.BFS) {
+            // how is passed the FS object ???
+            vm.BFS = new BrowserFS.EmscriptenFS()  // {FS:vm.FS}
+            vm.BFS.Buffer = BrowserFS.BFSRequire('buffer').Buffer
         }
 
-        await BrowserFS.FileSystem.ZipFS.Create(
-            {"zipData" : track.media, "name": hint},
-            apk_cb
-        )
-    }
+        const track_media = MM[trackid].media
+
+        if (!bfs2) {
+            console.warn(" ==================== BFS1 ===============")
+            BrowserFS.InMemory = BrowserFS.FileSystem.InMemory
+            BrowserFS.OverlayFS = BrowserFS.FileSystem.OverlayFS
+            BrowserFS.MountableFileSystem = BrowserFS.FileSystem.MountableFileSystem
+            BrowserFS.ZipFS = BrowserFS.FileSystem.ZipFS
+
+            function apk_cb(e, apkfs){
+                console.log(__FILE__, "930 mounting", hint, "onto", track.mount.point)
+
+                BrowserFS.InMemory.Create(
+                    function(e, memfs) {
+                        BrowserFS.OverlayFS.Create({"writable" :  memfs, "readable" : apkfs },
+                            function(e, ovfs) {
+                                BrowserFS.MountableFileSystem.Create({
+                                    '/' : ovfs
+                                    }, async function(e, mfs) {
+                                        await BrowserFS.initialize(mfs);
+                                        await vm.FS.mount(vm.BFS, {root: track.mount.path}, track.mount.point);
+                                        setTimeout(()=>{track.ready=true}, 0)
+                                    })
+                            }
+                        );
+                    }
+                );
+            }
+
+            await BrowserFS.ZipFS.Create(
+                {"zipData" : track_media, "name": hint},
+                apk_cb
+            )
+
+        } else { // bfs1
+            console.warn(" ==================== BFS2 ===============")
+
+            // assuming FS is from Emscripten
+            await BrowserFS.configure({
+                fs: 'MountableFileSystem',
+                options: {
+                    '/': {
+                        fs: 'OverlayFS',
+                        options: {
+                            readable: { fs: 'ZipFS', options: { zipData: track_media, name: 'hint'  } },
+                            writable: { fs: 'InMemory' }
+                        }
+                    }
+                }
+            });
+
+            vm.FS.mount(vm.BFS, { root: track.mount.path, }, track.mount.point);
+
+        } // bfs2
+
+        setTimeout(()=>{track.ready=true}, 0)
+
+    } // track type mount
 }
 
 
@@ -1102,30 +1276,6 @@ function MM_play(track, loops) {
 
 
 
-function MM_autoevents(track) {
-    const media = track.media
-
-    if (media.MM_autoevents) {
-        return
-    }
-
-    media.addEventListener("canplaythrough", (event) => {
-        track.ready = true
-        if (track.auto)
-            media.play()
-    })
-
-    media.addEventListener('ended', (event) => {
-        if (track.loops<0)
-            media.play()
-
-        if (track.loops>0) {
-            track.loops--;
-            media.play()
-        }
-    })
-}
-
 
 window.cross_track = async function cross_track(trackid, url, flags) {
     var response = await fetch(url, flags || FETCH_FLAGS);
@@ -1134,7 +1284,7 @@ window.cross_track = async function cross_track(trackid, url, flags) {
 
     const reader = response.body.getReader();
 
-    const len = +response.headers.get("Content-Length");
+    const len = Number(response.headers.get("Content-Length"));
     const track = MM[trackid]
 
     // concatenate chunks into single Uint8Array
@@ -1157,10 +1307,7 @@ window.cross_track = async function cross_track(trackid, url, flags) {
             track.pos = -1
             console.error("1396: cannot download", url)
         }
-
         track.pos += value.length
-
-        //console.log(`${trackid}:${url} Received ${track.pos} of ${track.len}`)
     }
 
     console.log(`${trackid}:${url} Received ${track.pos} of ${track.len} to ${track.path}`)
@@ -1234,7 +1381,7 @@ console.log("MM.cross_track", trackid, transport, type, url )
 
         track.play = (loops) => { MM_play( track, loops) }
 
-        MM_autoevents(track)
+        MM_autoevents(track, trackid)
 
     }
 
@@ -1260,7 +1407,7 @@ MM.load = function load(trackid, loops) {
 
 
     if (track.type === "audio") {
-        MM_autoevents( track )
+        MM_autoevents( track , trackid )
         return trackid
     }
 
@@ -1278,10 +1425,12 @@ MM.load = function load(trackid, loops) {
 MM.play = function play(trackid, loops, start, fade_ms) {
     console.log("MM.play",trackid, loops, MM[trackid] )
     const track = MM[trackid]
+
     track.loops = loops
-    if (track.ready)
+
+    if (track.ready) {
         track.media.play()
-    else {
+    } else {
         console.warn("Cannot play before user interaction, will retry", track )
         function play_asap() {
             if (track.ready) {
@@ -1298,7 +1447,20 @@ MM.stop = function stop(trackid) {
     console.log("MM.stop", trackid, MM[trackid] )
     MM[trackid].media.currentTime = 0
     MM[trackid].media.pause()
+    MM.current_trackid = 0
 }
+
+MM.get_pos = function get_pos(trackid) {
+    if (MM.transition)
+        return 0
+
+    const track = MM[trackid]
+
+    if (track && track.media)
+        return MM[trackid].media.currentTime
+    return -1
+}
+
 
 
 MM.pause = function pause(trackid) {
@@ -1308,6 +1470,7 @@ MM.pause = function pause(trackid) {
 
 MM.unpause = function unpause(trackid) {
     console.log("MM.unpause", trackid, MM[trackid] )
+    MM.current_trackid = trackid
     MM[trackid].media.play()
 }
 
@@ -1324,10 +1487,64 @@ MM.set_socket = function set_socket(mode) {
     console.log("WebSocket default mode is now :", mode)
 }
 
-// TODO: https://ffmpegwasm.netlify.app/ https://github.com/ffmpegwasm
+
+function MM_autoevents(track, trackid) {
+    const media = track.media
+
+    if (media.MM_autoevents) {
+        return
+    }
+
+    media.MM_autoevents = 1
+
+    track.media.onplaying = (event) => {
+        MM.transition = 0
+        MM.current_trackid = trackid
+    }
+
+    media.addEventListener("canplaythrough", (event) => {
+        track.ready = true
+        if (track.auto) {
+            media.play()
+        }
+    })
+
+    media.addEventListener('ended', (event) => {
+
+        if (track.loops<0) {
+            console.log("track ended - looping forever")
+            media.play()
+            return
+        }
+        if (track.loops>0) {
+            track.loops--;
+            console.log("track ended - pass", track.loops)
+            media.play()
+            return
+        }
+
+        console.log("track ended - q?", MM.next_tid)
+
+        // check a track is queued
+        if (MM.next_tid) {
+            MM.transition = 1
+            console.log("queued", MM.next_hint, "from", MM.next, "loops", MM.next_loops)
+            track.auto = true
+            MM.play(MM.next_tid, MM.next_loops)
+            MM.next_tid = 0
+        }
+    })
+}
+
+
 // js.MM.CAMERA
+
+// TODO: https://ffmpegwasm.netlify.app/ https://github.com/ffmpegwasm
+// TODO: write png in a wasm pre allocated array
+// TODO: frame rate
+
 window.MM.camera.started = 0
-window.MM.camera.init = function * (width,height, preview, grabber) {
+window.MM.camera.init = function * (device, width,height, preview, grabber) {
     if (!MM.camera.started) {
         var done = 0
         var rc = null
@@ -1335,14 +1552,29 @@ window.MM.camera.init = function * (width,height, preview, grabber) {
         vidcap.id = "vidcap"
         vidcap.autoplay = true
 
+        window.vidcap = vidcap
         width = width || 640
-        height = width || 480
+        height = height || 480
+
+        vidcap.width = width
+        vidcap.height = height
+        const device = MM.camera.device || "/dev/video0"
+
+
+
+        MM.camera.fd = {}
+        MM.camera.busy = 0
+
+        // 60 fps
+        MM.camera.frame = { device : undefined , rate : Number.parseInt(1000/30/4) }
 
         var framegrabber = null
 
         if (window.stdout) {
+
             if (preview)
                 stdout.appendChild(vidcap)
+
             if (grabber) {
                 framegrabber = document.createElement('canvas')
                 stdout.appendChild(framegrabber)
@@ -1350,6 +1582,7 @@ window.MM.camera.init = function * (width,height, preview, grabber) {
 
             }
         }
+
         if (!framegrabber)
             framegrabber = new OffscreenCanvas(width, height)
         else {
@@ -1357,8 +1590,7 @@ window.MM.camera.init = function * (width,height, preview, grabber) {
             framegrabber.height = height
         }
 
-
-        var localMediaStream = null;
+        window.framegrabber = framegrabber
 
         function onCameraFail(e) {
             console.log('924: Camera did not start.', e)
@@ -1366,42 +1598,66 @@ window.MM.camera.init = function * (width,height, preview, grabber) {
             done =1
         }
 
-        MM.camera.get_raw = function () {
-            if (localMediaStream) {
-                framegrabber.getContext("2d").drawImage(localMediaStream, 0, 0);
-            }
-        }
-
-        //btn_snapshot.addEventListener("click", MM.camera.get_image )
-
         const params = {
-            audio: true,
+            audio: false,
             video: {
-                mandatory: {
-                    maxWidth: width,
-                    maxHeight: height
-                }
+                "width": { ideal: width },
+                "height": {  ideal: height },
             }
         }
 
-        MM.camera.get_image = async function (device) {
-            device = device || "/dev/video0"
-            MM.camera.get_raw()
-            MM.camera.blob = await framegrabber.convertToBlob()
-            const reader = new FileReader()
-            reader.addEventListener("load", () => {
-                FS.writeFile(device,  new Int8Array(reader.result) )
-                console.log("frame ready in", device)
-                }, false
-            );
-            reader.readAsArrayBuffer(MM.camera.blob)
-            return device
+
+        MM.camera.query_image = function () {
+            // ok to use previous image
+            if ( FS.analyzePath(device).exists )
+                return true
+            if (MM.camera.busy>25)
+                console.error("frame grabber is stuck")
+            return false
         }
+
+        // TODO: same but async
+        MM.camera.get_raw = function * () {
+            // capture next frame and wait conversion
+            setTimeout(GRABBER, 0)
+            while (!MM.camera.frame[device])
+                yield 0
+            return MM.camera.frame[device]
+        }
+
+        const reader = new FileReader()
+
+        reader.addEventListener("load", () => {
+                const data = new Int8Array(reader.result)
+                FS.writeFile(device,  data )
+                //console.log("frame ready at ", MM.camera.busy)
+                MM.camera.frame[device] = data.length
+                MM.camera.busy--
+            }, false
+        )
+
+        async function GRABBER() {
+            if (MM.camera.busy<25)
+                setTimeout(GRABBER, MM.camera.frame["rate"])
+
+            if (MM.camera.busy>0)
+                return
+
+            MM.camera.busy++
+            framegrabber.getContext("2d").drawImage(vidcap, 0, 0);
+
+            // convert the new frame !
+            MM.camera.frame[device] = undefined
+            MM.camera.blob = await framegrabber.convertToBlob({type:"image/png"})
+            reader.readAsArrayBuffer(MM.camera.blob)
+        }
+
+        window.GRABBER = GRABBER
 
         function connection(stream) {
-            localMediaStream = vidcap // document.querySelector('video');
-            localMediaStream.srcObject = stream
-            localMediaStream.onloadedmetadata = function(e) {
+            vidcap.srcObject = stream
+            vidcap.onloadedmetadata = function(e) {
+                setTimeout(GRABBER, 0)
                 console.log("video stream ready")
                 MM.camera.started = 1
                 done =1
@@ -1413,6 +1669,10 @@ window.MM.camera.init = function * (width,height, preview, grabber) {
         .catch(e => onCameraFail(e))
 
         while (!done)
+            yield 0
+
+        // wait for first frame
+        while (!MM.camera.frame[device])
             yield 0
     }
     yield window.MM.camera.started
@@ -1810,15 +2070,19 @@ async function onload() {
     var has_vt = false
 
     for (const feature of vm.config.features) {
+        if (feature.startsWith("3d")) {
+            vm.config.user_canvas_managed = 3
+        }
+
         if (feature.startsWith("embed")) {
 
-            vm.config.user_canvas_managed = 1
+            vm.config.user_canvas_managed = vm.config.user_canvas_managed || 1
 
-            const canvas = feat_gui(true)
-            if ( canvas.innerHTML.length > 20 ) {
+            const canvasXd = feat_gui(true)
+            if ( canvasXd.innerHTML.length > 20 ) {
                 vm.PyConfig.frozen = "/tmp/to_embed.py"
             }
-            // only canvas when embedding, stdxxx go to console.
+            // only canvas when embedding 2D/3D, stdxxx go to console.
             break
         }
 
@@ -1934,7 +2198,6 @@ function auto_conf(cfg) {
         }
     }
 
-console.log("pythons found at", url )
 
     const old_url = url
 
@@ -1956,7 +2219,6 @@ console.warn("TODO: merge/replace location options over script options")
     }
 
     elems = url.rsplit('#',1)
-console.log("pythons found at", url , elems)
     url = elems.shift()
 
     if (elems.length)
@@ -1965,9 +2227,7 @@ console.log("pythons found at", url , elems)
         }
 
     elems = url.rsplit('?',1)
-console.log("pythons found at", url , elems)
     url = elems.shift()
-console.log("pythons found at", url , elems)
 
     if (elems.length)
         for (const arg of elems.pop().split("&")) {
@@ -1983,15 +2243,22 @@ console.log("pythons found at", url , elems)
         console.warn("1601: no inlined code found")
     }
 
-    // default
-    vm.script.interpreter = "cpython"
+    // resolve python executable
 
     if (vm.cpy_argv.length) {
         var orig_argv_py
-        if ( vm.cpy_argv[0].search('cpython3')>=0 || vm.cpy_argv[0].search('wapy')>=0 )
-            orig_argv_py = vm.script.interpreter
-        vm.script.interpreter = orig_argv_py || config.python || vm.script.interpreter
-        console.log("no python implementation specified, using default :",vm.script.interpreter)
+        if (vm.cpy_argv[0].search('cpython3')>=0) {
+            vm.script.interpreter = "cpython"
+            config.PYBUILD = vm.cpy_argv[0].substr(7) || "3.11"
+        } else {
+            if (vm.cpy_argv[0].search('wapy')>=0) {
+// TODO wapy is not versionned
+                vm.script.interpreter = "wapy"
+            } else {
+                vm.script.interpreter = config.python || "cpython"
+                config.PYBUILD = vm.cpy_argv[0].substr(7) || "3.11"
+            }
+        }
     }
 
     // running pygbag proxy, lan testing or a module url ?
@@ -2000,14 +2267,23 @@ console.log("pythons found at", url , elems)
     }
 
     config.cdn     = config.cdn || url.split(module_name, 1)[0]  //??=
+    config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
+    config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
+
+
+    // resolve arguments
+
     config.xtermjs = config.xtermjs || 0
 
     config.archive = config.archive || (location.search.search(".apk")>=0)  //??=
 
     config.debug = config.debug || (location.hash.search("#debug")>=0) //??=
 
-//FIXME: debug should force -i or just display vt ?
+//FIXME: should debug force -i or just display vt ?
 config.interactive = config.interactive || (location.search.search("-i")>=0) //??=
+
+    config.cols = cfg.cols || 132
+    config.lines = cfg.lines || 32
 
     config.gui_debug = config.gui_debug ||  2  //??=
 
@@ -2018,15 +2294,15 @@ config.interactive = config.interactive || (location.search.search("-i")>=0) //?
     config.can_close = config.can_close || 0
     config.autorun  = config.autorun || 0 //??=
     config.features = config.features || cfg.os.split(",") //??=
-// TODO wapy is not versionned
-    config.PYBUILD  = config.PYBUILD || vm.script.interpreter.substr(7) || "3.11" //??=
+
     config._sdl2    = config._sdl2 || "canvas" //??=
 
-    if (config.ume_block === undefined)
-        config.ume_block || true //??=
+    if (config.ume_block === undefined) {
+        config.ume_block = 1 //??=
+    }
 
-    config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
-    config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
+    console.log(JSON.stringify(config))
+
 
     // https://docs.python.org/3/c-api/init_config.html#initialization-with-pyconfig
 
@@ -2110,6 +2386,8 @@ function auto_start(cfg) {
                 cfg = {
                     module : false,
                     python : script.dataset.python,
+                    cols : script.dataset.cols,
+                    lines : script.dataset.lines,
                     url : script.src,
                     os : script.dataset.os,
                     text : code,
@@ -2142,23 +2420,12 @@ function auto_start(cfg) {
 
     }
 
-    console.error("auto_start done")
-
 }
-
 
 
 window.set_raw_mode = function (param) {
     window.RAW_MODE = param || 0
 }
-
-
-
-
-
-
-
-
 
 
 

@@ -49,12 +49,17 @@ debug:
 #include <unistd.h>
 
 
+#include "../build/gen_static.h"
+
 #if PYDK_emsdk
     #include <emscripten/html5.h>
     #include <emscripten/key_codes.h>
     #include "emscripten.h"
+    /*
+    #define SDL2
     #include <SDL2/SDL.h>
     #include <SDL2/SDL_ttf.h>
+    */
 //    #include <SDL_hints.h> // SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT
     #define SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT   "SDL_EMSCRIPTEN_KEYBOARD_ELEMENT"
 
@@ -69,8 +74,8 @@ debug:
     #error "wasi unsupported yet"
 #endif
 
-#include "../build/gen_inittab.h"
 
+#include "../build/gen_inittab.h"
 
 static int preloads = 0;
 static long long loops = 0;
@@ -145,21 +150,10 @@ embed_test(PyObject *self, PyObject *args, PyObject *kwds)
 
 #include <emscripten/html5.h>
 #include <GLES2/gl2.h>
-static PyObject *
-embed_webgl(PyObject *self, PyObject *args, PyObject *kwds)
-{
-    	// setting up EmscriptenWebGLContextAttributes
-	EmscriptenWebGLContextAttributes attr;
-	emscripten_webgl_init_context_attributes(&attr);
-	attr.alpha = 0;
 
-	// target the canvas selector
-	EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas", &attr);
-	emscripten_webgl_make_context_current(ctx);
-    glClearColor(0.984, 0.4627, 0.502, 1.0);
-	glClear(GL_COLOR_BUFFER_BIT);
-    return Py_BuildValue("i", emscripten_webgl_get_current_context() );
-}
+
+static PyObject *embed_webgl(PyObject *self, PyObject *args, PyObject *kwds);
+
 
 void
 embed_preload_cb_onload(const char *fn) {
@@ -304,7 +298,7 @@ embed_isatty(PyObject *self, PyObject *argv) {
     return Py_BuildValue("i", isatty(fd) );
 }
 
-
+#if SDL2
 static PyObject *
 embed_get_sdl_version(PyObject *self, PyObject *_null)
 {
@@ -313,7 +307,7 @@ embed_get_sdl_version(PyObject *self, PyObject *_null)
     SDL_GetVersion(&v);
     return Py_BuildValue("iii", v.major, v.minor, v.patch);
 }
-
+#endif
 
 static PyMethodDef mod_embed_methods[] = {
     {"run", (PyCFunction)embed_run, METH_VARARGS | METH_KEYWORDS, "start aio stepping"},
@@ -342,9 +336,9 @@ static PyMethodDef mod_embed_methods[] = {
     {"prompt", (PyCFunction)embed_prompt,  METH_NOARGS, "output the prompt"},
 
     {"isatty", (PyCFunction)embed_isatty,  METH_VARARGS, "isatty(int fd)"},
-
+#if SDL2
     {"get_sdl_version", embed_get_sdl_version, METH_NOARGS, "get_sdl_version"},
-
+#endif
     {"test", (PyCFunction)embed_test, METH_VARARGS | METH_KEYWORDS, "test"},
 
     {"webgl", (PyCFunction)embed_webgl, METH_VARARGS | METH_KEYWORDS, "test"},
@@ -357,13 +351,18 @@ static struct PyModuleDef mod_embed = {
     "embed",
     NULL,
     -1,
-    mod_embed_methods
+    mod_embed_methods,
+    NULL, // m_slots
+    NULL, // m_traverse
+    NULL, // m_clear
+    NULL, // m_free
 };
 
 static PyObject *embed_dict;
 
 PyMODINIT_FUNC init_embed(void) {
 
+// activate javascript bindings that were moved from libpython to pymain.
 #if defined(PYDK_emsdk)
     int res;
     sysmod = PyImport_ImportModule("sys"); // must call Py_DECREF when finished
@@ -381,18 +380,20 @@ err_occurred:;
 type_init_failed:;
 #endif
 
+// helper module for pygbag api not well defined and need clean up.
+// callable as "platform" module.
     PyObject *embed_mod = PyModule_Create(&mod_embed);
     embed_dict = PyModule_GetDict(embed_mod);
     PyDict_SetItemString(embed_dict, "js2py", PyUnicode_FromString("{}"));
     return embed_mod;
-
 
 }
 
 
 struct timeval time_last, time_current, time_lapse;
 
-// "files"
+// crude "files" used for implementing "os level" communications with host.
+
 
 #define FD_MAX 64
 #define FD_BUFFER_MAX 4096
@@ -517,16 +518,19 @@ main_iteration(void) {
                 fprintf( stderr, "%d: %s", lines, buf );
         }
 
-        //printf("rcon data %i lines=%i\n", datalen, lines);
+
 
         rewind(file);
+
         if (lines>1)  {
             PyRun_SimpleFile( file, "<stdin>");
         } else {
             lines = 0;
             while( !PyRun_InteractiveOne( file, "<stdin>") ) lines++;
         }
+
         rewind(file);
+
 #       undef file
     }
 
@@ -549,7 +553,26 @@ main_iteration(void) {
     HOST_RETURN(0);
 }
 
-// #define EGLTEST
+
+static void reprint(const char *fmt, PyObject *obj) {
+    PyObject* repr = PyObject_Repr(obj);
+    PyObject* str = PyUnicode_AsEncodedString(repr, "utf-8", "~E~");
+    const char *bytes = PyBytes_AS_STRING(str);
+    printf("REPR(%s): %s\n", fmt, bytes);
+    Py_XDECREF(repr);
+    Py_XDECREF(str);
+}
+
+
+
+
+
+
+
+
+#define EGLTEST
+
+
 
 #if defined(EGLTEST)
     #include <GLES2/gl2.h>
@@ -573,11 +596,15 @@ egl_GetCurrentDisplay (void) {
 
 
 EMSCRIPTEN_KEEPALIVE void egl_test() {
-    EGLContext context;
-    EGLSurface surface;
+    EGLContext context = NULL;
+    EGLSurface surface = NULL;
+    EGLDisplay display = NULL;
+    EGLNativeWindowType dummyWindow = 0;
     EGLConfig config;
 
-    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+#if 0
+
+    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     assert(display != EGL_NO_DISPLAY);
     assert(eglGetError() == EGL_SUCCESS);
 
@@ -607,27 +634,56 @@ EMSCRIPTEN_KEEPALIVE void egl_test() {
     assert(eglGetError() == EGL_SUCCESS);
     assert(ret == EGL_TRUE);
 
-    EGLNativeWindowType dummyWindow = 0;
+    dummyWindow = 0;
 
     surface = eglCreateWindowSurface(display, config, dummyWindow, NULL);
     if ( surface == EGL_NO_SURFACE ){
         puts("EGL_NO_SURFACE");
     }
 
+    EGLint width, height;
+    eglQuerySurface(display, surface, EGL_WIDTH, &width);
+    eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+    printf("(%d, %d)\n", width, height);
+
     // Create a GL context
+
     context = eglCreateContext(display, config, EGL_NO_CONTEXT, attribs );
-    if ( context == EGL_NO_CONTEXT ) {
-        puts("EGL_NO_CONTEXT");
+
+    surface = eglCreateWindowSurface(display, config, dummyWindow, NULL);
+    if ( surface == EGL_NO_SURFACE ){
+        puts("EGL_NO_SURFACE");
     }
 
-       // Make the context current
+    // Make the context current
     if ( !eglMakeCurrent(display, surface, surface, context) ) {
         puts("!eglMakeCurrent");
-        goto fail;
+        //goto fail;
+    }
+
+#else
+    EmscriptenWebGLContextAttributes attr;
+    emscripten_webgl_init_context_attributes(&attr);
+    attr.alpha = 0;
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas3d", &attr);
+    emscripten_webgl_make_context_current(ctx);
+
+    context = (EGLContext)emscripten_webgl_get_current_context();
+
+    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    assert(display != EGL_NO_DISPLAY);
+    assert(eglGetError() == EGL_SUCCESS);
+
+#endif
+
+
+    if ( context == EGL_NO_CONTEXT ) {
+        puts("EGL_NO_CONTEXT");
+    } else {
+        puts("EGL_CONTEXT");
     }
 
     puts("EGL test complete");
-
 
     puts(glGetString(GL_VERSION));
 
@@ -636,9 +692,33 @@ EMSCRIPTEN_KEEPALIVE void egl_test() {
 fail:
     puts("EGL test failed");
 }
+
 #endif
 
+static PyObject *
+embed_webgl(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    // setting up EmscriptenWebGLContextAttributes
+    #if defined(EGLTEST)
+    egl_test();
+    #endif
+
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_get_current_context();
+    //EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas3d", &attr);
+    //emscripten_webgl_make_context_current(ctx);
+
+    glClearColor(0.9, 0.5, 0.5, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    return Py_BuildValue("i", emscripten_webgl_get_current_context() );
+}
+
 PyStatus status;
+
+#if defined(FT)
+#include <freetype2/ft2build.h>
+#include FT_FREETYPE_H
+#endif
+
 
 int
 main(int argc, char **argv)
@@ -651,7 +731,6 @@ main(int argc, char **argv)
         .bytes_argv = argv,
         .wchar_argv = NULL
     };
-
 
     PyImport_AppendInittab("embed", init_embed);
 
@@ -727,8 +806,8 @@ main(int argc, char **argv)
     io_shm[IO_RAW] = memset(malloc(FD_BUFFER_MAX) , 0, FD_BUFFER_MAX);
     io_shm[IO_RCON] = memset(malloc(FD_BUFFER_MAX) , 0, FD_BUFFER_MAX);
 
-
 EM_ASM({
+    const FD_BUFFER_MAX = $0;
     const shm_stdin = $1;
     const shm_rawinput = $2;
     const shm_rcon = $3;
@@ -755,26 +834,26 @@ EM_ASM({
         Module['onCustomMessage'] = onCustomMessage;
 
     } else {
-        console.log("PyMain: running in main thread");
+        console.log("PyMain: running in main thread, faking onCustomMessage");
         Module.postMessage = function custom_postMessage(event) {
             switch (event.type) {
                 case "raw" :  {
-                    stringToUTF8( event.data, shm_rawinput, $0);
+                    stringToUTF8( event.data, shm_rawinput, FD_BUFFER_MAX);
                     break;
                 }
 
                 case "stdin" :  {
-                    stringToUTF8( event.data, shm_stdin, $0);
+                    stringToUTF8( event.data, shm_stdin, FD_BUFFER_MAX);
                     break;
                 }
                 case "rcon" :  {
-                    stringToUTF8( event.data, shm_rcon, $0);
+                    stringToUTF8( event.data, shm_rcon, FD_BUFFER_MAX);
                     break;
                 }
                 default : console.warn("custom_postMessage?", event);
             }
         };
-        window.main_chook = true;
+
     }
 
     if (!is_worker && window.BrowserFS) {
@@ -785,75 +864,41 @@ EM_ASM({
     } else {
         console.error("PyMain: BrowserFS not found");
     }
+
     if (1) {
         SYSCALLS.getStreamFromFD(0).tty = true;
         SYSCALLS.getStreamFromFD(1).tty = true;
-        SYSCALLS.getStreamFromFD(2).tty = true;
+        SYSCALLS.getStreamFromFD(2).tty = false;
     }
+
 }, FD_BUFFER_MAX, io_shm[0], io_shm[IO_RAW], io_shm[IO_RCON]);
 
 
-    PyRun_SimpleString("import sys, os, json, builtins, shutil, time;");
+    PyRun_SimpleString("import sys, os, json, builtins, shutil, time");
+    //PyRun_SimpleString("import hpy;import hpy.universal;print('HPy init done')");
+#if defined(FT)
+    int error;
 
+    FT_Library library;
+    error = FT_Init_FreeType(&library);
+    if (error) {
+        printf("FT error %d\n", error);
+    } else {
+        puts(" @@@@@@@@@@@@@@@@@@@@@ FT OK @@@@@@@@@@@@@@@@@@@@");
+    }
+#endif
 
-#   if defined(EGLTEST)
-    egl_test();
-#   endif // EGLTEST
-
-
-/*
-    #if 1
-        // display a nice six logo python-powered in xterm.js
-        #define MAX 132
-        char buf[MAX];
-        FILE *six = fopen("/data/data/org.python/assets/cpython.six","r");
-        while (six) {
-            fgets(buf, MAX, six);
-            if (!buf[0]) {
-                fclose(six);
-                puts("");
-                break;
-            }
-            fputs(buf, stdout);
-            buf[0]=0;
-        }
-
-    #else
-        // same but with python
-        // repl banner
-        PyRun_SimpleString("print(open('/data/data/org.python/assets/cpython.six').read());");
-    #endif
-
-    PyRun_SimpleString("print('CPython',sys.version, '\\n', file=sys.stderr);");
-
-    //embed_flush(NULL,NULL);
-*/
-
-
+#if SDL2
     // SDL2 basic init
     {
-        //SDL_Init(SDL_INIT_EVERYTHING); //SDL_INIT_VIDEO | SDL_INIT_TIMER);
-
         if (TTF_Init())
             fprintf(stderr, "ERROR: TTF_Init error");
 
         const char *target = "1";
         SDL_SetHint(SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT, target);
-
-/*
-        note for self : typical sdl2 init ( emscripten samples are sdl1 )
-        SDL_CreateWindow("default", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, 0);
-        window = SDL_CreateWindow("CheckKeys Test",
-                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                  800, 600, 0);
-        renderer = SDL_CreateRenderer(window, -1, 0);
-        SDL_RenderPresent(renderer);
-
-        emscripten_set_keypress_callback_on_thread(target, NULL, false, &on_keyboard_event, NULL);
-        emscripten_set_keypress_callback(target, NULL, false, &on_keyboard_event);
-*/
     }
-
+#endif
     emscripten_set_main_loop( (em_callback_func)main_iteration, 0, 1);
+
     return 0;
 }

@@ -6,16 +6,17 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-        SDK_VERSION: 3.1.31.1
+        SDK_VERSION: 3.1.46.2bi
         SYS_PYTHON: /usr/bin/python3
-        PACKAGES: emsdk pygame
+        PACKAGES: emsdk hpy _ctypes pygame
+        BUILD_STATIC: emsdk _ctypes hpy
         STATIC: false
-        BUILDS: 3.12 3.11
-        CYTHON: Cython-3.0.0a11-py2.py3-none-any.whl
+        BUILDS: 3.11 3.12
+        CYTHON: Cython-3.0.1-py2.py3-none-any.whl
         LD_VENDOR: -sUSE_GLFW=3
 
     steps:
-    - uses: actions/checkout@v3.0.2
+    - uses: actions/checkout@v3.3.0
     - name: pygame-wasm-builder prepare
       run: |
             pwd
@@ -46,20 +47,16 @@ jobs:
             cd $GITHUB_WORKSPACE
             PYBUILD=3.11 bash ./scripts/build-loader.sh
 
-
-
-
-    - name: build 3.12 packages
-      run: |
-            cd $GITHUB_WORKSPACE
-            PYBUILD=3.12 bash ./scripts/build-pkg.sh
-
-    - name: build 3.12 loader
-      run: |
-            cd $GITHUB_WORKSPACE
-            PYBUILD=3.12 bash ./scripts/build-loader.sh
-
-
+#    - name: build 3.12 packages
+#      run: |
+#            cd $GITHUB_WORKSPACE
+#            PYBUILD=3.12 bash ./scripts/build-pkg.sh
+#
+#    - name: build 3.12 loader
+#      run: |
+#            cd $GITHUB_WORKSPACE
+#            PYBUILD=3.12 bash ./scripts/build-loader.sh
+#
 
     - name: publishing
       run: |
@@ -68,7 +65,7 @@ jobs:
 
 
     - name : "Upload to GitHub pages"
-      uses: JamesIves/github-pages-deploy-action@4.1.7
+      uses: JamesIves/github-pages-deploy-action@v4.4.1
       with:
         branch: gh-pages
         folder: build/web/archives

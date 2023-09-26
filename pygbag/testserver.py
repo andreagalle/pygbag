@@ -194,7 +194,7 @@ class CodeHandler(SimpleHTTPRequestHandler):
                 print(self.path)
                 print()
 
-            elif path.endswith(".html"):
+            elif self.path.endswith(".html"):
                 content = f.read()
 
                 # redirect known CDN to relative path

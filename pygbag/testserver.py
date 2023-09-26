@@ -209,7 +209,7 @@ class CodeHandler(SimpleHTTPRequestHandler):
 
             file_size = fs[6]
 
-            if self.path.endswith(".py"):
+            if path.endswith(".py"):
                 if VERB:
                     print(" --> do_GET(%s)" % path)
                 if fstring_decode:
@@ -221,7 +221,7 @@ class CodeHandler(SimpleHTTPRequestHandler):
                 file_size = len(content)
                 f = io.BytesIO(content)
 
-            elif self.path.endswith(".json"):
+            elif path.endswith(".json"):
                 if VERB:
                     print()
                     print(self.path)
